@@ -1,0 +1,14 @@
+# Deploy with:  npx wrangler deploy   (from this folder)
+name = "flipper-proxy"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+# Replace with your app's origin(s), comma separated. "*" allows any site to use the proxy
+# (it is still protected by PROXY_TOKEN).
+ALLOWED_ORIGINS = "*"
+ALLOWED_AI_HOSTS = "api.deepseek.com,api.openai.com,openrouter.ai"
+ALLOWED_FETCH_HOSTS = ""
+
+# Secrets — set these with `npx wrangler secret put <NAME>`, never commit them:
+#   PROXY_TOKEN, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET
