@@ -1,4 +1,12 @@
-import type { Item, LocalSettings, MarketplaceLink, PlatformFee, Project, Settings } from './schema';
+import type {
+  AiProvider,
+  Item,
+  LocalSettings,
+  MarketplaceLink,
+  PlatformFee,
+  Project,
+  Settings,
+} from './schema';
 
 export const DEFAULT_CATEGORIES = [
   'Electronics',
@@ -55,6 +63,9 @@ const EURO = [
 const CURRENCY_BY_COUNTRY: Record<string, string> = {
   US: 'USD',
   GB: 'GBP',
+  IM: 'GBP',
+  JE: 'GBP',
+  GG: 'GBP',
   CA: 'CAD',
   AU: 'AUD',
   NZ: 'NZD',
@@ -126,6 +137,9 @@ export const EBAY_SITES: EbaySite[] = [
 const EBAY_BY_COUNTRY: Record<string, string> = {
   US: 'EBAY_US',
   GB: 'EBAY_GB',
+  IM: 'EBAY_GB',
+  JE: 'EBAY_GB',
+  GG: 'EBAY_GB',
   DE: 'EBAY_DE',
   FR: 'EBAY_FR',
   IT: 'EBAY_IT',
@@ -194,9 +208,12 @@ const AMAZON_DOMAIN: Record<string, string> = {
   BR: 'www.amazon.com.br',
 };
 
+/** The Crown Dependencies buy and sell on the UK sites. */
+const UK_MARKET = ['IM', 'JE', 'GG'];
+
 /** Built-in research links, tuned to the user's country. */
 export function defaultMarketplaces(country: string, ebayMarketplaceId: string): MarketplaceLink[] {
-  const c = country.toUpperCase();
+  const c = UK_MARKET.includes(country.toUpperCase()) ? 'GB' : country.toUpperCase();
   const ebay = ebaySiteFor(ebayMarketplaceId).domain;
   const amazon = AMAZON_DOMAIN[c] ?? (EURO.includes(c) ? 'www.amazon.de' : 'www.amazon.com');
   const vinted = VINTED_DOMAIN[c];
@@ -265,32 +282,123 @@ export function defaultMarketplaces(country: string, ebayMarketplaceId: string):
   ];
 }
 
-export const AI_PROVIDER_PRESETS = {
+export interface AiModelOption {
+  id: string;
+  note: string;
+  /** Accepts photos. */
+  vision: boolean;
+}
+
+export interface AiProviderPreset {
+  label: string;
+  /** Wire protocol: OpenAI chat completions, Anthropic Messages or Gemini generateContent. */
+  protocol: 'openai' | 'anthropic' | 'gemini';
+  baseUrl: string;
+  model: string;
+  keyUrl: string;
+  keyPlaceholder: string;
+  models: AiModelOption[];
+  /** Built-in web search is available. */
+  webSearch: boolean;
+  /** The creativity (temperature) setting is sent. Newer Claude and Gemini models manage it themselves. */
+  temperature: boolean;
+}
+
+/** Providers in dropdown order. Model IDs checked September 2026. */
+export const AI_PROVIDER_PRESETS: Record<AiProvider, AiProviderPreset> = {
   deepseek: {
     label: 'DeepSeek',
+    protocol: 'openai',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     keyUrl: 'https://platform.deepseek.com/api_keys',
+    keyPlaceholder: 'sk-…',
+    models: [
+      { id: 'deepseek-flash', note: 'V4.1 Flash — fast, very cheap, sees photos', vision: true },
+      { id: 'deepseek-v4-pro', note: 'V4 Pro — deeper reasoning, text only', vision: false },
+    ],
+    webSearch: true,
+    temperature: true,
+  },
+  anthropic: {
+    label: 'Claude (Anthropic)',
+    protocol: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-opus-5',
+    keyUrl: 'https://platform.claude.com/settings/keys',
+    keyPlaceholder: 'sk-ant-…',
+    models: [
+      { id: 'claude-opus-5', note: 'Opus 5 — most capable', vision: true },
+      { id: 'claude-sonnet-5', note: 'Sonnet 5 — fast, lower cost', vision: true },
+      { id: 'claude-haiku-4-5', note: 'Haiku 4.5 — fastest, lowest cost', vision: true },
+    ],
+    webSearch: true,
+    temperature: false,
+  },
+  gemini: {
+    label: 'Google Gemini',
+    protocol: 'gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    model: 'gemini-3.8-flash',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    keyPlaceholder: 'AIza…',
+    models: [
+      { id: 'gemini-3.8-flash', note: '3.8 Flash — fast, has a free tier', vision: true },
+      { id: 'gemini-3.1-pro', note: '3.1 Pro — most capable', vision: true },
+    ],
+    webSearch: true,
+    temperature: false,
   },
   openai: {
     label: 'OpenAI',
+    protocol: 'openai',
     baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
+    model: 'gpt-5-mini',
     keyUrl: 'https://platform.openai.com/api-keys',
+    keyPlaceholder: 'sk-…',
+    models: [{ id: 'gpt-5-mini', note: 'Cheap, sees photos', vision: true }],
+    webSearch: false,
+    temperature: true,
   },
   openrouter: {
     label: 'OpenRouter',
+    protocol: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1',
-    model: 'deepseek/deepseek-chat',
+    model: 'deepseek/deepseek-v4-flash',
     keyUrl: 'https://openrouter.ai/keys',
+    keyPlaceholder: 'sk-or-…',
+    models: [],
+    webSearch: false,
+    temperature: true,
   },
   custom: {
     label: 'Custom (OpenAI-compatible)',
+    protocol: 'openai',
     baseUrl: 'http://localhost:11434/v1',
     model: 'llama3.1',
     keyUrl: '',
+    keyPlaceholder: 'Leave empty for local servers',
+    models: [],
+    webSearch: false,
+    temperature: true,
   },
-} as const;
+};
+
+/** DeepSeek retired these names on 24 July 2026. */
+const RETIRED_DEEPSEEK_MODELS = ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash'];
+
+/**
+ * Fill in settings fields added after the record was saved and move off retired
+ * model names. Pure; applied on every read.
+ */
+export function migrateSettings(stored: Partial<Settings>): Settings {
+  const defaults = createDefaultSettings();
+  const merged: Settings = { ...defaults, ...stored, ai: { ...defaults.ai, ...stored.ai } };
+  if (!(merged.ai.provider in AI_PROVIDER_PRESETS)) merged.ai.provider = 'custom';
+  if (merged.ai.provider === 'deepseek' && RETIRED_DEEPSEEK_MODELS.includes(merged.ai.model))
+    merged.ai.model = AI_PROVIDER_PRESETS.deepseek.model;
+  return merged;
+}
 
 /** Normalise a locale tag so Intl never throws (e.g. "en-US@posix", "en_GB.UTF-8"). */
 export function safeLocale(raw: string | undefined | null): string {
@@ -343,6 +451,8 @@ export function createDefaultSettings(): Settings {
       model: AI_PROVIDER_PRESETS.deepseek.model,
       temperature: 0.4,
       viaProxy: false,
+      webSearch: true,
+      sendPhotos: true,
     },
     proxyUrl: '',
   };
@@ -352,6 +462,7 @@ export function createDefaultLocalSettings(): LocalSettings {
   return {
     id: 'local',
     aiApiKey: '',
+    aiKeys: {},
     proxyToken: '',
     googleClientId: '',
     autoSync: false,

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
-import { createDefaultLocalSettings, createDefaultSettings, safeLocale } from '@/db/defaults';
+import { createDefaultLocalSettings, migrateSettings, safeLocale } from '@/db/defaults';
 import type { LocalSettings, Settings } from '@/db/schema';
 import { getSettings } from '@/db/repo';
 import { formatMoney, formatNumber, formatPercent } from '@/lib/money';
@@ -36,7 +36,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppState | null>(() => {
     if (settings === undefined) return null;
-    const merged = { ...createDefaultSettings(), ...settings };
+    const merged = migrateSettings(settings ?? {});
     return {
       settings: { ...merged, locale: safeLocale(merged.locale) },
       local: { ...createDefaultLocalSettings(), ...local },
@@ -95,6 +95,7 @@ export function useFormat() {
 
 export function aiConfigFrom(settings: Settings, local: LocalSettings): AiConfig {
   return {
+    provider: settings.ai.provider,
     baseUrl: settings.ai.baseUrl,
     model: settings.ai.model,
     temperature: settings.ai.temperature,
@@ -102,6 +103,10 @@ export function aiConfigFrom(settings: Settings, local: LocalSettings): AiConfig
     viaProxy: settings.ai.viaProxy,
     proxyUrl: settings.proxyUrl,
     proxyToken: local.proxyToken,
+    webSearch: settings.ai.webSearch,
+    sendPhotos: settings.ai.sendPhotos,
+    country: settings.country,
+    city: settings.city,
   };
 }
 

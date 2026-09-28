@@ -5,6 +5,7 @@ import { updateItem } from '@/db/repo';
 import type { Item } from '@/db/schema';
 import { useAiContext } from '@/app/context';
 import { generateListing, LISTING_PLATFORMS, type ListingPlatform, type ListingResult } from '@/ai/tasks';
+import { ownerImagesForAi } from '@/ai/images';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
 import { Segmented } from '@/components/ui/segmented';
@@ -38,7 +39,9 @@ export function ListingPanel({ item }: { item: Item }) {
   };
 
   const generate = async () => {
-    const res = await job.run((signal) => generateListing(ai, item, platform, extra, signal));
+    const res = await job.run(async (signal) =>
+      generateListing(ai, item, platform, extra, signal, await ownerImagesForAi(ai.cfg, 'item', item.id)),
+    );
     if (res) {
       setTitle(res.title);
       const specifics = res.itemSpecifics

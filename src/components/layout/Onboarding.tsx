@@ -10,6 +10,9 @@ import { Logo } from './Logo';
 const COUNTRIES = [
   'US',
   'GB',
+  'IM',
+  'JE',
+  'GG',
   'IE',
   'CA',
   'AU',

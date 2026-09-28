@@ -4,7 +4,7 @@
  *   GET  /health               -> which features are configured
  *   GET  /ebay/search?q=&marketplace=EBAY_GB&limit=25&used=1
  *   GET  /fetch?url=<feed url> -> raw body of an allow-listed feed/page
- *   POST /ai/chat/completions  -> forwards to the AI base URL in X-AI-Base
+ *   POST /ai/<path>            -> forwards to <X-AI-Base>/<path> (OpenAI, Anthropic and Gemini APIs)
  *
  * Environment (set with `wrangler secret put NAME` or in the dashboard):
  *   PROXY_TOKEN          shared secret; the app sends it as X-Proxy-Token (strongly recommended)
@@ -12,8 +12,13 @@
  *   EBAY_CLIENT_ID       eBay developer App ID (production keyset)
  *   EBAY_CLIENT_SECRET   eBay developer Cert ID
  *   ALLOWED_FETCH_HOSTS  comma list of hosts /fetch may read, e.g. example-market.com,feeds.example.org
- *   ALLOWED_AI_HOSTS     comma list (default api.deepseek.com,api.openai.com,openrouter.ai)
+ *   ALLOWED_AI_HOSTS     comma list (default: DeepSeek, Anthropic, Gemini, OpenAI, OpenRouter)
  */
+
+const DEFAULT_AI_HOSTS =
+  'api.deepseek.com,api.anthropic.com,generativelanguage.googleapis.com,api.openai.com,openrouter.ai';
+/** Request headers passed on to the AI provider (auth and API versioning only). */
+const AI_HEADERS = ['authorization', 'x-api-key', 'anthropic-version', 'anthropic-beta', 'x-goog-api-key'];
 
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
 let ebayToken = null; // { token, expiresAt } cached per isolate
@@ -107,7 +112,7 @@ async function proxyGet(url, env, cors) {
   });
 }
 
-async function proxyAi(request, env, cors) {
+async function proxyAi(request, url, env, cors) {
   const base = request.headers.get('X-AI-Base') || '';
   let parsed;
   try {
@@ -117,16 +122,20 @@ async function proxyAi(request, env, cors) {
   }
   if (
     parsed.protocol !== 'https:' ||
-    !hostAllowed(parsed.hostname, list(env.ALLOWED_AI_HOSTS, 'api.deepseek.com,api.openai.com,openrouter.ai'))
+    !hostAllowed(parsed.hostname, list(env.ALLOWED_AI_HOSTS, DEFAULT_AI_HOSTS))
   ) {
     return json({ error: `AI host ${parsed.hostname} is not allowed` }, 403, cors);
   }
-  const upstream = await fetch(`${base.replace(/\/+$/, '')}/chat/completions`, {
+  const path = url.pathname.slice('/ai'.length);
+  if (!path.startsWith('/') || path.includes('..')) return json({ error: 'Invalid path' }, 400, cors);
+  const headers = { 'Content-Type': 'application/json' };
+  for (const name of AI_HEADERS) {
+    const value = request.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  const upstream = await fetch(`${base.replace(/\/+$/, '')}${path}${url.search}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: request.headers.get('Authorization') || '',
-    },
+    headers,
     body: request.body,
   });
   return new Response(upstream.body, {
@@ -144,7 +153,10 @@ export default {
     const cors = {
       'Access-Control-Allow-Origin': allowedOrigins.includes('*') ? '*' : origin,
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Token, X-AI-Base',
+      // Echo the requested headers: AI SDKs add their own (x-api-key, anthropic-version, x-stainless-*…).
+      'Access-Control-Allow-Headers':
+        request.headers.get('Access-Control-Request-Headers') ||
+        'Content-Type, Authorization, X-Proxy-Token, X-AI-Base',
       'Access-Control-Max-Age': '86400',
       Vary: 'Origin',
     };
@@ -170,9 +182,9 @@ export default {
           return await ebaySearch(url, env, cors);
         case '/fetch':
           return await proxyGet(url, env, cors);
-        case '/ai/chat/completions':
-          if (request.method !== 'POST') break;
-          return await proxyAi(request, env, cors);
+      }
+      if (url.pathname.startsWith('/ai/') && request.method === 'POST') {
+        return await proxyAi(request, url, env, cors);
       }
       return json({ error: 'Not found' }, 404, cors);
     } catch (e) {

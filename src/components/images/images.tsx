@@ -51,6 +51,32 @@ export function Thumb({
   );
 }
 
+/** Preview of a photo that hasn't been saved yet. */
+export function PendingThumb({
+  file,
+  onRemove,
+  className,
+}: {
+  file: Blob;
+  onRemove: () => void;
+  className?: string;
+}) {
+  const url = useObjectUrl(file);
+  return (
+    <div className={cn('relative size-20 shrink-0 overflow-hidden rounded-xl bg-surface-2', className)}>
+      {url && <img src={url} alt="" className="size-full object-cover" />}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove photo"
+        className="absolute top-1 right-1 rounded-full bg-black/60 p-0.5 text-white"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function FullImage({ img, className }: { img: ImageRecord; className?: string }) {
   const url = useObjectUrl(img.blob);
   return url ? <img src={url} alt="" className={className} /> : null;

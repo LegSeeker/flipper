@@ -32,13 +32,15 @@ Works on phone and desktop, installs like an app, works offline, and keeps your 
 - Cost basis = purchase + extra costs + repair parts + share of project costs. Realized and projected profit, margin, ROI, days to sell.
 - **Stats & reports**: P&L (cost-of-goods-sold basis), monthly revenue/profit chart with table view, profit by category / platform / project type, best and worst items, sell-through, stock value, business expenses. CSV exports for spreadsheets and tax.
 
-**AI assistant (bring your own key — DeepSeek by default)**
+**AI assistant (bring your own key — DeepSeek, Claude or Gemini)**
 
-- Chat with optional inventory context (what sells best for you, what to source, pricing strategy).
-- Per item: market research, **price estimate** using your comparables (and live eBay listings via the proxy), **optimized listing** title/description for eBay, Facebook, Vinted.
+- Chat with optional inventory context (what sells best for you, what to source, pricing strategy). Attach photos from the camera or gallery ("is this worth buying?").
+- **Live web search** for current prices with Claude, Gemini and DeepSeek. Every answer is labelled **Live web data** (with its sources) or **Estimate**, and prices in the text are marked live or estimate.
+- Per item: market research, **price check** using web results, your comparables and live eBay listings via the proxy — listings the AI found online are saved as comparables with links. **Optimized listing** title/description for eBay, Facebook, Vinted.
+- **Fill in from photos**: snap an item and the AI fills in name, brand, model, category, condition and description.
 - Per project: **part-out list** generator that creates the items for you; **repair plan** that builds the shopping list and checks your stock.
 - **Bulk market price refresh** for active items.
-- Works with any OpenAI-compatible API: DeepSeek, OpenAI, OpenRouter, Ollama, LM Studio.
+- Also works with any OpenAI-compatible API: OpenAI, OpenRouter, Ollama, LM Studio.
 
 **Marketplaces**
 
@@ -71,18 +73,27 @@ To test on your phone over Wi-Fi, run `npm run dev -- --host` and open the shown
 
 ## Setting up the AI assistant
 
-1. Create an API key at [platform.deepseek.com](https://platform.deepseek.com/api_keys) and add some credit.
-2. In **Settings → AI assistant**, keep provider **DeepSeek**, paste the key, and press **Test connection**.
-3. Model: `deepseek-chat` (fast, cheap — recommended) or `deepseek-reasoner` (slower, more thorough).
+1. Pick a provider in **Settings → AI assistant** and create a key (the settings page links to the right place). Add some credit where needed.
+2. Paste the key and press **Test connection**, then **Test web search**.
 
-The key is stored only in this browser (IndexedDB). It's never synced, exported or sent anywhere except the AI provider. If the provider rejects browser requests (CORS), turn on **Route through proxy** after setting up the proxy below.
+| Provider                    | Default model      | Photos           | Web search                                         | Notes                                                                     |
+| --------------------------- | ------------------ | ---------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| **DeepSeek** (default)      | `deepseek-flash`   | Yes (Flash only) | Yes — DeepSeek's search via its Anthropic endpoint | Cheapest. `deepseek-v4-pro` reasons more but is text only.                |
+| **Claude** (Anthropic)      | `claude-opus-5`    | Yes              | Yes — Claude web search + page fetch               | Most capable; `claude-sonnet-5` / `claude-haiku-4-5` cost less.           |
+| **Gemini** (Google)         | `gemini-3.8-flash` | Yes              | Yes — Grounding with Google Search                 | Has a free tier (rate-limited; search free up to a monthly quota).        |
+| OpenAI / OpenRouter / local | —                  | Model dependent  | No                                                 | Answers are marked as estimates. Turn off **Send photos** if unsupported. |
 
-> AI pricing is only as good as its data. The model's own knowledge may be out of date, so add real **sold** prices as comparables on the item's Market tab (or pull eBay listings via the proxy) before trusting an estimate.
+- Keys are stored only in this browser (IndexedDB), one per provider, so switching back and forth keeps them. They're never synced, exported or sent anywhere except that provider.
+- Web search is billed by the provider per search (Claude, and Gemini beyond its free quota) on top of tokens. Turn it off in Settings, or per chat with the **Web** toggle.
+- If DeepSeek's search endpoint can't be reached from the browser, the assistant answers without search and says so. If a provider blocks browser requests (CORS), turn on **Route through proxy** after setting up the proxy below.
+- Claude web search must be allowed for your organisation in the Claude Console if requests fail with a web-search error.
+
+> Treat AI prices as a starting point. **Live web data** answers cite their pages — open them. **Estimate** answers come from the model's memory and may be out of date. Facebook Marketplace can't be searched, so Facebook prices are always estimates.
 
 ## Marketplaces
 
 - **Facebook Marketplace** has no public API, so Flipper opens searches for you (set your FB location in Settings → Marketplaces). Scraping it would break Meta's terms and get accounts banned.
-- **eBay**: research links work out of the box, including a _sold listings_ link. For live listing data inside the app, set up the proxy with eBay API keys. eBay only offers _active_ listing prices through its public API; sold prices remain a link.
+- **eBay**: research links work out of the box, including a _sold listings_ link. With AI web search on, the price check looks up current sold and active listings itself. For eBay's own API data inside the app, set up the proxy with eBay API keys (it only offers _active_ listing prices; sold prices remain a link).
 - **Custom marketplaces**: add any site's search URL with `{query}` (and optionally `{city}`). If the site has an RSS/Atom/JSON search feed, add it as a feed URL and results can be pulled in as comparables through the proxy.
 
 ## Google Drive sync (optional)
@@ -110,7 +121,7 @@ See [proxy/README.md](proxy/README.md) for the 5-minute setup.
 ## Data & privacy
 
 - Everything is stored locally in your browser (IndexedDB). Photos are resized and **stripped of EXIF/GPS data** before saving.
-- Nothing leaves the device unless you: use the AI (item details you ask about are sent to your AI provider), use the proxy, or turn on Google Drive sync.
+- Nothing leaves the device unless you: use the AI (item details and, if enabled, downscaled photos you ask about are sent to your AI provider), use the proxy, or turn on Google Drive sync.
 - **Back up regularly** (Settings → Backup & restore). Browsers can clear site data, especially if the app isn't installed. Flipper asks the browser to protect its storage once you have data.
 
 ## Development
@@ -139,6 +150,6 @@ Other hosts: `npm run build` and serve `dist/`. If it's served from a sub-path, 
 ## Known limitations / ideas
 
 - Single currency per workspace (amounts are not converted if you change it).
-- Sold-price data needs manual comparables or links (eBay's sold-price API is restricted; Facebook has no API).
-- AI can't see photos (DeepSeek's chat API is text-only); describe condition in the item.
+- Sold-price data comes from AI web search, manual comparables or links (eBay's sold-price API is restricted; Facebook has no API and can't be searched).
+- DeepSeek web search goes through DeepSeek's Anthropic-compatible endpoint; if DeepSeek changes it, the assistant falls back to answering without search.
 - Ideas: barcode scanning to prefill items, multi-currency purchases, listing directly to eBay via its Sell API, shared team workspaces.

@@ -2,12 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
-import { ImagePlus, X } from 'lucide-react';
+import { ImagePlus, Sparkles } from 'lucide-react';
 import { db } from '@/db/db';
 import { emptyItem } from '@/db/defaults';
 import { addImages, createItem, updateItem } from '@/db/repo';
 import { CONDITIONS, ITEM_STATUSES, type Item } from '@/db/schema';
-import { useSettings } from '@/app/context';
+import { useAiContext, useFormat, useSettings } from '@/app/context';
+import { photosEnabled } from '@/ai/client';
+import { blobsForAi, MAX_AI_PHOTOS, ownerImagesForAi } from '@/ai/images';
+import { identifyItem, type IdentifyResult } from '@/ai/tasks';
+import { PendingThumb } from '@/components/images/images';
+import { AiErrorText, useAiJob } from '@/components/ai/common';
 import { Page, PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/ui/card';
@@ -35,10 +40,21 @@ export default function ItemEditPage() {
   const settings = useSettings();
   const projects = useLiveQuery(() => db.projects.toArray(), []);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  draftRef.current = draft;
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState('');
+  const ai = useAiContext();
+  const f = useFormat();
+  const identify = useAiJob<IdentifyResult>();
+  const savedPhotos = useLiveQuery(
+    () => (id ? db.images.where('[ownerType+ownerId]').equals(['item', id]).count() : 0),
+    [id],
+  );
+  const canIdentify =
+    ai.configured && photosEnabled(ai.cfg) && (isNew ? files.length > 0 : (savedPhotos ?? 0) > 0);
 
   useEffect(() => {
     void (async () => {
@@ -114,6 +130,105 @@ export default function ItemEditPage() {
 
   const perUnit = draft.quantity > 1 ? ' (per unit)' : '';
 
+  /** Ask the AI what's in the photos and fill in the fields that are still empty. */
+  const fillFromPhotos = () =>
+    identify.run(async (signal) => {
+      const images = isNew
+        ? await blobsForAi(ai.cfg, files)
+        : await ownerImagesForAi(ai.cfg, 'item', id!, MAX_AI_PHOTOS);
+      const res = await identifyItem(ai, images, settings.categories, draft.name, signal);
+      // Read the latest draft (the user may have typed while the AI was working).
+      const d = draftRef.current;
+      if (!d) return res;
+      const next = { ...d };
+      const filled: string[] = [];
+      const fill = <K extends 'name' | 'brand' | 'model' | 'category' | 'description'>(k: K, v: string) => {
+        if (v && !next[k].trim()) {
+          next[k] = v;
+          filled.push(k);
+        }
+      };
+      fill('name', res.name);
+      fill('brand', res.brand);
+      fill('model', res.model);
+      fill('category', res.category);
+      fill('description', res.description);
+      if (res.condition && d.condition === emptyItem().condition && res.condition !== d.condition) {
+        next.condition = res.condition;
+        filled.push('condition');
+      }
+      const tags = res.tags.map((t) => t.toLowerCase()).filter((t) => !d.tags.includes(t));
+      if (tags.length) {
+        next.tags = [...d.tags, ...tags.slice(0, 6)];
+        filled.push('tags');
+      }
+      if (res.estimatedValue && next.estimatedValue === null) {
+        next.estimatedValue = res.estimatedValue;
+        filled.push('estimated value');
+      }
+      setDraft(next);
+      toast.success(filled.length ? `Filled in ${filled.join(', ')}` : 'Nothing new to fill in');
+      return res;
+    });
+
+  const identifyButton = canIdentify ? (
+    <Button
+      size="sm"
+      onClick={fillFromPhotos}
+      loading={identify.loading}
+      icon={<Sparkles className="size-3.5" />}
+    >
+      Fill in from photos
+    </Button>
+  ) : null;
+
+  const photosSection = isNew && (
+    <Section
+      title="Photos"
+      description="Resized and stripped of location data before saving. The AI can fill in the details from them."
+      action={identifyButton}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          setFiles((f) => [...f, ...(e.target.files ? [...e.target.files] : [])]);
+          e.target.value = '';
+        }}
+      />
+      <div className="flex flex-wrap gap-2">
+        {files.map((file, i) => (
+          <PendingThumb key={i} file={file} onRemove={() => setFiles((f) => f.filter((_, j) => j !== i))} />
+        ))}
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="grid size-20 place-items-center rounded-xl border border-dashed border-border text-subtle hover:border-accent hover:text-accent"
+          aria-label="Add photos"
+        >
+          <ImagePlus className="size-6" />
+        </button>
+      </div>
+    </Section>
+  );
+
+  const identifyResult = identify.result && (
+    <div className="rounded-xl border border-accent/30 bg-accent/5 p-3 text-sm">
+      <p className="font-medium">
+        AI identification · confidence {identify.result.confidence}
+        {identify.result.estimatedValue ? ` · worth roughly ${f.money(identify.result.estimatedValue)}` : ''}
+      </p>
+      {identify.result.notes && <p className="mt-1 text-muted">{identify.result.notes}</p>}
+      <p className="mt-1 text-xs text-subtle">
+        The value is an estimate from the photos. After saving, run an AI price check on the Market tab for
+        live prices.
+      </p>
+    </div>
+  );
+
   return (
     <>
       <PageHeader
@@ -133,7 +248,10 @@ export default function ItemEditPage() {
             void save();
           }}
         >
-          <Section title="Basics">
+          {photosSection}
+          <AiErrorText message={identify.error} />
+          {identifyResult}
+          <Section title="Basics" action={isNew ? null : identifyButton}>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Name *"
@@ -195,42 +313,6 @@ export default function ItemEditPage() {
               </Field>
             </div>
           </Section>
-
-          {isNew && (
-            <Section
-              title="Photos"
-              description="Photos are resized and stripped of location data before saving."
-            >
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => {
-                  setFiles((f) => [...f, ...(e.target.files ? [...e.target.files] : [])]);
-                  e.target.value = '';
-                }}
-              />
-              <div className="flex flex-wrap gap-2">
-                {files.map((file, i) => (
-                  <PendingThumb
-                    key={i}
-                    file={file}
-                    onRemove={() => setFiles((f) => f.filter((_, j) => j !== i))}
-                  />
-                ))}
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="grid size-20 place-items-center rounded-xl border border-dashed border-border text-subtle hover:border-accent hover:text-accent"
-                  aria-label="Add photos"
-                >
-                  <ImagePlus className="size-6" />
-                </button>
-              </div>
-            </Section>
-          )}
 
           <Section title="Status & location">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -383,27 +465,5 @@ export default function ItemEditPage() {
         </form>
       </Page>
     </>
-  );
-}
-
-function PendingThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    const u = URL.createObjectURL(file);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [file]);
-  return (
-    <div className="relative size-20 overflow-hidden rounded-xl bg-surface-2">
-      {url && <img src={url} alt="" className="size-full object-cover" />}
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label="Remove photo"
-        className="absolute top-1 right-1 rounded-full bg-black/60 p-0.5 text-white"
-      >
-        <X className="size-3.5" />
-      </button>
-    </div>
   );
 }

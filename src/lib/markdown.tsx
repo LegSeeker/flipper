@@ -41,6 +41,45 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return out;
 }
 
+const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+const isDivider = (l: string) => /^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*(:?-{2,}:?\s*)?\|?\s*$/.test(l);
+const cells = (l: string) =>
+  l
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+
+function Table({ header, rows, k }: { header: string[]; rows: string[][]; k: string }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-left text-xs">
+        <thead>
+          <tr>
+            {header.map((h, i) => (
+              <th key={i} className="border-b border-border px-2 py-1.5 font-semibold text-fg">
+                {inline(h, `${k}-h${i}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-border/60 last:border-0">
+              {header.map((_, j) => (
+                <td key={j} className="px-2 py-1.5 align-top">
+                  {inline(r[j] ?? '', `${k}-${i}-${j}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function Markdown({ text }: { text: string }) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
@@ -83,7 +122,8 @@ export function Markdown({ text }: { text: string }) {
     }
   };
 
-  for (const raw of lines) {
+  for (let n = 0; n < lines.length; n++) {
+    const raw = lines[n];
     const line = raw.trimEnd();
     if (code) {
       if (line.startsWith('```')) {
@@ -100,6 +140,36 @@ export function Markdown({ text }: { text: string }) {
       flushPara();
       flushList();
       code = [];
+      continue;
+    }
+    if (isRow(line) && n + 1 < lines.length && isDivider(lines[n + 1])) {
+      flushPara();
+      flushList();
+      const header = cells(line);
+      const rows: string[][] = [];
+      n += 2;
+      while (n < lines.length && isRow(lines[n])) rows.push(cells(lines[n++]));
+      n--;
+      const k = `t${blocks.length}`;
+      blocks.push(<Table key={k} k={k} header={header} rows={rows} />);
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushPara();
+      flushList();
+      blocks.push(<hr key={`r${blocks.length}`} className="border-border" />);
+      continue;
+    }
+    const quote = /^\s*>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushPara();
+      flushList();
+      const k = `q${blocks.length}`;
+      blocks.push(
+        <blockquote key={k} className="border-l-2 border-accent/50 pl-3 text-muted">
+          {inline(quote[1], k)}
+        </blockquote>,
+      );
       continue;
     }
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);

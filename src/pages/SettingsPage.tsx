@@ -23,7 +23,8 @@ import {
 import { loadDemoData } from '@/db/demo';
 import type { AiProvider, MarketplaceLink, PlatformFee, Settings } from '@/db/schema';
 import { useApp, aiConfigFrom } from '@/app/context';
-import { testConnection } from '@/ai/client';
+import { canSearch, canSeeImages, testConnection, testWebSearch, type AiReply } from '@/ai/client';
+import { DataBasis, SourceList } from '@/components/ai/common';
 import { checkProxy } from '@/integrations/proxy';
 import { createBackup, importBackup } from '@/sync/backup';
 import { disconnectGoogle, hasValidToken, syncWithDrive } from '@/sync/drive';
@@ -41,6 +42,9 @@ import { Modal, useConfirm } from '@/components/ui/dialog';
 const COUNTRIES = [
   'US',
   'GB',
+  'IM',
+  'JE',
+  'GG',
   'IE',
   'CA',
   'AU',
@@ -450,19 +454,47 @@ function CategoriesSection() {
 function AiSection() {
   const { settings, local } = useApp();
   const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testing, setTesting] = useState<'' | 'chat' | 'web'>('');
+  const [webResult, setWebResult] = useState<AiReply | null>(null);
   const setAi = (patch: Partial<Settings['ai']>) => updateSettings({ ai: { ...settings.ai, ...patch } });
   const preset = AI_PROVIDER_PRESETS[settings.ai.provider];
+  const cfg = aiConfigFrom(settings, local);
+  const model = preset.models.find((m) => m.id === settings.ai.model);
+  const searchable = canSearch(cfg);
+
+  const switchProvider = async (provider: AiProvider) => {
+    const p = AI_PROVIDER_PRESETS[provider];
+    // Keep each provider's key so switching back doesn't lose it.
+    const aiKeys = { ...local.aiKeys, [settings.ai.provider]: local.aiApiKey };
+    await updateLocalSettings({ aiKeys, aiApiKey: aiKeys[provider] ?? '' });
+    await setAi({ provider, baseUrl: p.baseUrl, model: p.model });
+    setWebResult(null);
+  };
 
   const test = async () => {
-    setTesting(true);
+    setTesting('chat');
     try {
-      const reply = await testConnection(aiConfigFrom(settings, local));
+      const reply = await testConnection(cfg);
       toast.success(`Connected — model replied “${reply.slice(0, 30)}”`);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
-      setTesting(false);
+      setTesting('');
+    }
+  };
+
+  const testWeb = async () => {
+    setTesting('web');
+    setWebResult(null);
+    try {
+      const reply = await testWebSearch(cfg, settings.currency);
+      setWebResult(reply);
+      if (reply.sources.length) toast.success('Web search works');
+      else toast.warning('The model answered without searching — see the reply below');
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setTesting('');
     }
   };
 
@@ -471,17 +503,13 @@ function AiSection() {
       <Anchor id="ai" />
       <Section
         title="AI assistant"
-        description="Bring your own API key. DeepSeek is the default; any OpenAI-compatible API works (OpenAI, OpenRouter, Ollama, LM Studio…)."
+        description="Bring your own API key. DeepSeek is the default (cheap, sees photos); Claude and Gemini are also built in, and any OpenAI-compatible API works."
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Provider">
             <Select
               value={settings.ai.provider}
-              onChange={(e) => {
-                const provider = e.target.value as AiProvider;
-                const p = AI_PROVIDER_PRESETS[provider];
-                setAi({ provider, baseUrl: p.baseUrl, model: p.model });
-              }}
+              onChange={(e) => switchProvider(e.target.value as AiProvider)}
             >
               {(Object.keys(AI_PROVIDER_PRESETS) as AiProvider[]).map((k) => (
                 <option key={k} value={k}>
@@ -492,20 +520,21 @@ function AiSection() {
           </Field>
           <Field
             label="Model"
-            hint={
-              settings.ai.provider === 'deepseek'
-                ? 'deepseek-chat (fast, cheap) or deepseek-reasoner (slower, deeper)'
-                : undefined
-            }
+            htmlFor="ai-model"
+            hint={model?.note ?? (preset.models.length ? 'Custom model name' : undefined)}
           >
             <CommitInput
+              id="ai-model"
               value={settings.ai.model}
-              onCommit={(model) => setAi({ model: model.trim() })}
+              onCommit={(m) => setAi({ model: m.trim() })}
               list="ai-models"
             />
             <datalist id="ai-models">
-              <option value="deepseek-chat" />
-              <option value="deepseek-reasoner" />
+              {preset.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.note}
+                </option>
+              ))}
             </datalist>
           </Field>
           <Field label="API base URL" className="sm:col-span-2">
@@ -535,7 +564,7 @@ function AiSection() {
                 type={showKey ? 'text' : 'password'}
                 value={local.aiApiKey}
                 onCommit={(aiApiKey) => updateLocalSettings({ aiApiKey: aiApiKey.trim() })}
-                placeholder="sk-…"
+                placeholder={preset.keyPlaceholder}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -548,18 +577,31 @@ function AiSection() {
               </Button>
             </div>
           </Field>
-          <Field label={`Creativity (temperature ${settings.ai.temperature.toFixed(1)})`}>
-            <input
-              type="range"
-              min={0}
-              max={1.2}
-              step={0.1}
-              value={settings.ai.temperature}
-              onChange={(e) => setAi({ temperature: Number(e.target.value) })}
-              className="accent-[var(--accent)]"
+          <div className="space-y-3 sm:col-span-2">
+            <Switch
+              checked={settings.ai.webSearch && searchable}
+              onChange={(webSearch) => setAi({ webSearch })}
+              label="Web search for live prices"
+              description={
+                searchable
+                  ? settings.ai.provider === 'gemini'
+                    ? 'Uses Google Search grounding (free quota, then billed per search by Google).'
+                    : settings.ai.provider === 'deepseek'
+                      ? "Uses DeepSeek's built-in search (via its Anthropic-compatible endpoint)."
+                      : 'Uses Claude web search (billed per search by Anthropic).'
+                  : `Not available with ${preset.label} — answers use the model's own knowledge and are marked as estimates. Claude, Gemini and DeepSeek can search.`
+              }
             />
-          </Field>
-          <div className="flex items-end">
+            <Switch
+              checked={settings.ai.sendPhotos}
+              onChange={(sendPhotos) => setAi({ sendPhotos })}
+              label="Send photos to the AI"
+              description={
+                canSeeImages(cfg)
+                  ? 'Item photos help with identification, pricing and listings. Photos are downscaled first.'
+                  : `${settings.ai.model} can't see images — photos are skipped.`
+              }
+            />
             <Switch
               checked={settings.ai.viaProxy}
               onChange={(viaProxy) => setAi({ viaProxy })}
@@ -567,12 +609,37 @@ function AiSection() {
               description="Use if the provider blocks browser requests (CORS)"
             />
           </div>
+          {preset.temperature && (
+            <Field label={`Creativity (temperature ${settings.ai.temperature.toFixed(1)})`}>
+              <input
+                type="range"
+                min={0}
+                max={1.2}
+                step={0.1}
+                value={settings.ai.temperature}
+                onChange={(e) => setAi({ temperature: Number(e.target.value) })}
+                className="accent-[var(--accent)]"
+              />
+            </Field>
+          )}
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button onClick={test} loading={testing} disabled={!settings.ai.baseUrl}>
+          <Button onClick={test} loading={testing === 'chat'} disabled={!settings.ai.baseUrl || !!testing}>
             Test connection
           </Button>
+          {searchable && settings.ai.webSearch && (
+            <Button onClick={testWeb} loading={testing === 'web'} disabled={!!testing}>
+              Test web search
+            </Button>
+          )}
         </div>
+        {webResult && (
+          <div className="mt-3 space-y-2 rounded-xl bg-surface-2 p-3 text-sm">
+            <p>{webResult.text}</p>
+            <DataBasis searched={webResult.searched} sources={webResult.sources} />
+            <SourceList sources={webResult.sources} />
+          </div>
+        )}
       </Section>
     </>
   );

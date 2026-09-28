@@ -74,6 +74,20 @@ export async function processImage(file: Blob): Promise<ProcessedImage> {
   }
 }
 
+/**
+ * Downscale a photo for an AI model: large enough to read labels and spot
+ * damage, small enough to keep requests quick and cheap.
+ */
+export async function imageForAi(file: Blob, max = 1024): Promise<{ mime: string; data: string }> {
+  const src = await decode(file);
+  try {
+    const out = await render(src, max, 0.8);
+    return { mime: 'image/jpeg', data: await blobToBase64(out.blob) };
+  } finally {
+    if ('close' in src) src.close();
+  }
+}
+
 export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

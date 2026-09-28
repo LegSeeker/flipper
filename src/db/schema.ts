@@ -200,9 +200,12 @@ export interface Comp extends BaseRecord {
 
 // ---------------------------------------------------------------- Images
 
+/** Photos belong to an item, a project or an AI chat. */
+export type ImageOwnerType = OwnerType | 'chat';
+
 export interface ImageRecord {
   id: ID;
-  ownerType: OwnerType;
+  ownerType: ImageOwnerType;
   ownerId: ID;
   blob: Blob;
   thumb: Blob;
@@ -220,10 +223,21 @@ export type ImageMeta = Omit<ImageRecord, 'blob' | 'thumb'>;
 
 // ---------------------------------------------------------------- AI chat
 
+export interface WebSource {
+  url: string;
+  title: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   at: number;
+  /** Photos attached to a user message (ImageRecords owned by the chat). */
+  imageIds?: ID[];
+  /** Web pages an assistant reply drew on. */
+  sources?: WebSource[];
+  /** Web search was on for this reply. */
+  searched?: boolean;
 }
 
 export interface Conversation extends BaseRecord {
@@ -255,7 +269,7 @@ export interface MarketplaceLink {
   builtIn: boolean;
 }
 
-export type AiProvider = 'deepseek' | 'openai' | 'openrouter' | 'custom';
+export type AiProvider = 'deepseek' | 'anthropic' | 'gemini' | 'openai' | 'openrouter' | 'custom';
 
 export interface Settings {
   id: 'app';
@@ -285,6 +299,10 @@ export interface Settings {
     model: string;
     temperature: number;
     viaProxy: boolean;
+    /** Let the assistant search the web (Claude, Gemini, DeepSeek). */
+    webSearch: boolean;
+    /** Send item/chat photos to models that can see images. */
+    sendPhotos: boolean;
   };
   proxyUrl: string;
 }
@@ -292,7 +310,10 @@ export interface Settings {
 /** Device-only settings: never exported or synced. */
 export interface LocalSettings {
   id: 'local';
+  /** Key for the selected AI provider. */
   aiApiKey: string;
+  /** Keys for the other providers, kept so switching back doesn't lose them. */
+  aiKeys: Partial<Record<AiProvider, string>>;
   proxyToken: string;
   googleClientId: string;
   autoSync: boolean;

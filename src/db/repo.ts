@@ -3,13 +3,20 @@
  * effects and deletion tombstones (needed for sync) stay consistent.
  */
 import { db } from './db';
-import { createDefaultLocalSettings, createDefaultSettings, emptyItem, emptyProject } from './defaults';
+import {
+  createDefaultLocalSettings,
+  createDefaultSettings,
+  emptyItem,
+  emptyProject,
+  migrateSettings,
+} from './defaults';
 import {
   ACTIVE_ITEM_STATUSES,
   type Comp,
   type Conversation,
   type Expense,
   type ID,
+  type ImageOwnerType,
   type ImageRecord,
   type Item,
   type ItemStatus,
@@ -45,7 +52,7 @@ async function tombstone(table: SyncedTable, ids: ID[]): Promise<void> {
 
 export async function getSettings(): Promise<Settings> {
   const existing = await db.settings.get('app');
-  if (existing) return { ...createDefaultSettings(), ...existing };
+  if (existing) return migrateSettings(existing);
   const fresh = createDefaultSettings();
   await db.settings.put(fresh);
   return fresh;
@@ -361,10 +368,10 @@ export async function clearComps(itemId: ID, source?: string): Promise<void> {
 // ---------------------------------------------------------------- Images
 
 export async function addImages(
-  ownerType: OwnerType,
+  ownerType: ImageOwnerType,
   ownerId: ID,
-  files: File[],
-): Promise<{ added: number; errors: string[] }> {
+  files: Blob[],
+): Promise<{ added: number; ids: ID[]; errors: string[] }> {
   const existing = await db.images.where('[ownerType+ownerId]').equals([ownerType, ownerId]).count();
   const errors: string[] = [];
   let order = existing;
@@ -388,17 +395,20 @@ export async function addImages(
         updatedAt: now,
       });
     } catch (e) {
-      errors.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+      const name = file instanceof File ? file.name : 'Photo';
+      errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (added.length) {
     await db.images.bulkAdd(added);
-    const table = ownerType === 'item' ? db.items : db.projects;
-    const owner = await table.get(ownerId);
-    if (owner && !owner.primaryImageId)
-      await table.update(ownerId, { primaryImageId: added[0].id, updatedAt: Date.now() });
+    if (ownerType !== 'chat') {
+      const table = ownerType === 'item' ? db.items : db.projects;
+      const owner = await table.get(ownerId);
+      if (owner && !owner.primaryImageId)
+        await table.update(ownerId, { primaryImageId: added[0].id, updatedAt: Date.now() });
+    }
   }
-  return { added: added.length, errors };
+  return { added: added.length, ids: added.map((a) => a.id), errors };
 }
 
 export async function deleteImage(id: ID): Promise<void> {
@@ -406,6 +416,7 @@ export async function deleteImage(id: ID): Promise<void> {
   if (!img) return;
   await db.images.delete(id);
   await tombstone('images', [id]);
+  if (img.ownerType === 'chat') return;
   const table = img.ownerType === 'item' ? db.items : db.projects;
   const owner = await table.get(img.ownerId);
   if (owner?.primaryImageId === id) {
@@ -438,7 +449,9 @@ export async function saveConversation(
   if (c.id) {
     const existing = await db.conversations.get(c.id);
     if (existing) {
-      const next = { ...existing, ...c, updatedAt: now } as Conversation;
+      // Ignore fields passed as undefined so an update never blanks the title.
+      const patch = Object.fromEntries(Object.entries(c).filter(([, v]) => v !== undefined));
+      const next = { ...existing, ...patch, updatedAt: now } as Conversation;
       await db.conversations.put(next);
       return next;
     }
@@ -455,8 +468,13 @@ export async function saveConversation(
 }
 
 export async function deleteConversation(id: ID): Promise<void> {
-  await db.conversations.delete(id);
-  await tombstone('conversations', [id]);
+  await db.transaction('rw', [db.conversations, db.images, db.tombstones], async () => {
+    const images = await db.images.where('[ownerType+ownerId]').equals(['chat', id]).primaryKeys();
+    await db.images.bulkDelete(images);
+    await tombstone('images', images);
+    await db.conversations.delete(id);
+    await tombstone('conversations', [id]);
+  });
 }
 
 // ---------------------------------------------------------------- Danger zone

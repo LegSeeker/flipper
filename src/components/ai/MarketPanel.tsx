@@ -6,8 +6,10 @@ import { db } from '@/db/db';
 import { addComps, clearComps, deleteComp, updateItem } from '@/db/repo';
 import type { Item } from '@/db/schema';
 import { useApp, useAiContext, useFormat } from '@/app/context';
-import { refreshItemPrice } from '@/ai/refresh';
+import { refreshItemPrice, WEB_COMP_SOURCE } from '@/ai/refresh';
 import { researchItem, type PriceResult } from '@/ai/tasks';
+import { hostOf, searchEnabled } from '@/ai/client';
+import { ownerImagesForAi } from '@/ai/images';
 import { ebayResultsToComps, searchEbay } from '@/integrations/ebay';
 import { feedToComps, fetchFeed } from '@/integrations/feeds';
 import { hasProxy } from '@/integrations/proxy';
@@ -21,7 +23,16 @@ import { Field, Input, MoneyField } from '@/components/ui/field';
 import { Modal } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/field';
-import { AiDisclaimer, AiErrorText, AiNotConfigured, useAiJob, useAiStream } from './common';
+import {
+  AiDisclaimer,
+  AiErrorText,
+  AiNotConfigured,
+  DataBasis,
+  SourceList,
+  TypingDots,
+  useAiJob,
+  useAiStream,
+} from './common';
 
 export function MarketPanel({ item }: { item: Item }) {
   const { settings, local } = useApp();
@@ -44,8 +55,17 @@ export function MarketPanel({ item }: { item: Item }) {
     price
       .run((signal) => refreshItemPrice(item, { settings, local, ctx: ai, useEbay: hasProxy(proxy), signal }))
       .then((r) => {
-        if (r) toast.success(`Estimated value updated: ${f.money(r.suggestedPrice)}`);
+        if (r)
+          toast.success(
+            `Estimated value updated: ${f.money(r.suggestedPrice)}${r.basis === 'live' ? ' (live data)' : ' (estimate)'}`,
+          );
       });
+
+  const runResearch = () =>
+    research.start(async function* (signal) {
+      const images = await ownerImagesForAi(ai.cfg, 'item', item.id, 3);
+      yield* researchItem(ai, { ...item, name: query || item.name }, signal, images);
+    });
 
   const fetchEbay = async () => {
     setFetching('ebay');
@@ -126,6 +146,11 @@ export function MarketPanel({ item }: { item: Item }) {
       {price.result && (
         <div className="space-y-2 rounded-xl border border-accent/30 bg-accent/5 p-3 text-sm">
           <div className="flex flex-wrap gap-2">
+            <DataBasis
+              searched={price.result.searched}
+              sources={price.result.sources}
+              basis={price.result.basis}
+            />
             <Badge tone="accent">List at {f.money(price.result.suggestedPrice)}</Badge>
             {price.result.quickSalePrice ? (
               <Badge tone="info">Quick sale {f.money(price.result.quickSalePrice)}</Badge>
@@ -144,6 +169,12 @@ export function MarketPanel({ item }: { item: Item }) {
               ))}
             </ul>
           )}
+          {price.result.webComps.length > 0 && (
+            <p className="text-xs text-subtle">
+              {price.result.webComps.length} listings found online were added to Comparables below.
+            </p>
+          )}
+          <SourceList sources={price.result.sources} />
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
@@ -215,9 +246,7 @@ export function MarketPanel({ item }: { item: Item }) {
           {ai.configured && (
             <Button
               size="sm"
-              onClick={() =>
-                research.start((signal) => researchItem(ai, { ...item, name: query || item.name }, signal))
-              }
+              onClick={runResearch}
               loading={research.loading}
               icon={<Sparkles className="size-3.5" />}
             >
@@ -225,16 +254,25 @@ export function MarketPanel({ item }: { item: Item }) {
             </Button>
           )}
         </div>
-        {!hasProxy(proxy) && (
+        {!hasProxy(proxy) && !searchEnabled(ai.cfg) && (
           <p className="text-xs text-subtle">
-            Tip: deploy the optional proxy (Settings → Marketplaces) to pull live eBay listings into
-            comparables automatically.
+            Tip: turn on web search (Settings → AI, with Claude, Gemini or DeepSeek) or deploy the optional
+            proxy (Settings → Marketplaces) so pricing uses live listings instead of estimates.
           </p>
         )}
         <AiErrorText message={research.error} />
-        {research.text && (
-          <div className="rounded-xl border border-border bg-surface-2/50 p-3 text-sm text-muted">
-            <Markdown text={research.text} />
+        {(research.text || research.loading) && (
+          <div className="space-y-3 rounded-xl border border-border bg-surface-2/50 p-3 text-sm text-muted">
+            {research.text && <Markdown text={research.text} />}
+            {research.loading && (!research.text || research.status) && (
+              <TypingDots label={research.status || 'Researching…'} />
+            )}
+            {!research.loading && research.text && (
+              <div className="space-y-2 border-t border-border pt-2">
+                <DataBasis searched={research.searched} sources={research.sources} />
+                <SourceList sources={research.sources} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -277,7 +315,7 @@ export function MarketPanel({ item }: { item: Item }) {
                       )}
                     </div>
                     <div className="text-xs text-subtle">
-                      {c.source}
+                      {c.source === WEB_COMP_SOURCE && c.url ? `Web · ${hostOf(c.url)}` : c.source}
                       {c.condition && ` · ${c.condition}`}
                       {c.date && ` · ${f.date(c.date)}`}
                     </div>

@@ -2,12 +2,12 @@
 
 An optional Cloudflare Worker that gives the app:
 
-| Endpoint                    | What it does                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------------ |
-| `GET /health`               | Reports which features are configured.                                               |
-| `GET /ebay/search`          | Searches **active** eBay listings (Browse API) with your keys, kept on the server.   |
-| `GET /fetch?url=`           | Fetches an RSS/Atom/JSON feed from hosts you allow, adding CORS headers.             |
-| `POST /ai/chat/completions` | Forwards AI requests to an allowed provider, for providers that block browser calls. |
+| Endpoint           | What it does                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `GET /health`      | Reports which features are configured.                                               |
+| `GET /ebay/search` | Searches **active** eBay listings (Browse API) with your keys, kept on the server.   |
+| `GET /fetch?url=`  | Fetches an RSS/Atom/JSON feed from hosts you allow, adding CORS headers.             |
+| `POST /ai/<path>`  | Forwards AI requests to an allowed provider, for providers that block browser calls. |
 
 Every request must carry your `PROXY_TOKEN` (the app sends it automatically), and only your app's origin(s) are accepted if you set `ALLOWED_ORIGINS`.
 
@@ -26,7 +26,7 @@ Edit `wrangler.toml` before deploying to lock things down:
 
 - `ALLOWED_ORIGINS` — your app's origin, e.g. `https://you.github.io` (default `*`).
 - `ALLOWED_FETCH_HOSTS` — hosts `/fetch` may read, comma separated (default: none).
-- `ALLOWED_AI_HOSTS` — AI providers `/ai` may forward to.
+- `ALLOWED_AI_HOSTS` — AI providers `/ai` may forward to (default: DeepSeek, Anthropic, Gemini, OpenAI, OpenRouter). The app sends the provider's base URL in `X-AI-Base`; only auth and API-version headers are passed on.
 
 ## eBay keys (for live listing prices)
 

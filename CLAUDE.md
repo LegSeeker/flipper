@@ -14,6 +14,8 @@ Local-first PWA (React 19 + TypeScript + Vite + Tailwind 4 + Dexie). Read `docs/
 - Changing Dexie indexes needs a new `this.version(n)` in `src/db/db.ts`; never edit a shipped version. New non-indexed fields just need a default in `db/defaults.ts` (settings are merged with defaults on read).
 - Money/profit logic belongs in `src/lib/calc.ts` / `src/lib/stats.ts` as pure functions with tests.
 - AI output that is saved must be validated with zod in `src/ai/tasks.ts`.
+- All AI calls go through `src/ai/client.ts` (it picks the protocol per provider). Claude uses the official `@anthropic-ai/sdk` in `src/ai/anthropic.ts`, loaded lazily — keep it out of the main bundle. Provider presets and model IDs live in `AI_PROVIDER_PRESETS` (`src/db/defaults.ts`); retired model names are migrated in `migrateSettings()`.
+- Prices from the AI must be labelled live (web sources or user comparables) or estimate — don't show an AI price without that label.
 - Secrets (API keys, proxy token, Google client ID) live in `LocalSettings` only — never in `Settings`, snapshots, backups or logs.
 - Keep docs (README, docs/ARCHITECTURE.md, proxy/README.md) in step with behaviour changes.
 - Playwright is pinned to 1.56.1 to match the Chromium preinstalled in Claude Code cloud sessions (`/opt/pw-browsers`).

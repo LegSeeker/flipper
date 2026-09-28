@@ -7,7 +7,7 @@ compatibility_date = "2026-09-01"
 # Replace with your app's origin(s), comma separated. "*" allows any site to use the proxy
 # (it is still protected by PROXY_TOKEN).
 ALLOWED_ORIGINS = "*"
-ALLOWED_AI_HOSTS = "api.deepseek.com,api.openai.com,openrouter.ai"
+ALLOWED_AI_HOSTS = "api.deepseek.com,api.anthropic.com,generativelanguage.googleapis.com,api.openai.com,openrouter.ai"
 ALLOWED_FETCH_HOSTS = ""
 
 # Secrets — set these with `npx wrangler secret put <NAME>`, never commit them:

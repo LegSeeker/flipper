@@ -7,8 +7,10 @@ import {
   createProject,
   deleteItems,
   deleteProject,
+  deleteConversation,
   deleteSale,
   emptyRequirement,
+  saveConversation,
   updateItem,
   updateRequirement,
   updateSettings,
@@ -122,5 +124,34 @@ describe('repo', () => {
     await deleteProject(p.id, { deleteItems: false });
     expect(await db.projects.get(p.id)).toBeUndefined();
     expect((await db.items.get(it.id))!.projectId).toBeNull();
+  });
+
+  it('keeps a chat title on update and deletes its photos with it', async () => {
+    const c = await saveConversation({
+      title: 'Is this worth buying?',
+      messages: [{ role: 'user', content: 'x', at: 1, imageIds: ['img1'] }],
+    });
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    await db.images.add({
+      id: 'img1',
+      ownerType: 'chat',
+      ownerId: c.id,
+      blob,
+      thumb: blob,
+      mime: 'image/jpeg',
+      width: 1,
+      height: 1,
+      size: 1,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await saveConversation({ id: c.id, title: undefined, messages: [] });
+    expect((await db.conversations.get(c.id))?.title).toBe('Is this worth buying?');
+
+    await deleteConversation(c.id);
+    expect(await db.images.get('img1')).toBeUndefined();
+    const tombstones = await db.tombstones.toArray();
+    expect(tombstones.map((t) => t.table).sort()).toEqual(['conversations', 'images']);
   });
 });

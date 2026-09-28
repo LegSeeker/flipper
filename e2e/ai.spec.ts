@@ -1,7 +1,73 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
+/** Anthropic-style event stream: one web search, then the answer (as DeepSeek's search endpoint sends). */
+function searchStream(answer: string): string {
+  const events: object[] = [
+    {
+      type: 'message_start',
+      message: {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        model: 'deepseek-flash',
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 1 },
+      },
+    },
+    {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} },
+    },
+    { type: 'content_block_stop', index: 0 },
+    {
+      type: 'content_block_start',
+      index: 1,
+      content_block: {
+        type: 'web_search_tool_result',
+        tool_use_id: 's1',
+        content: [
+          {
+            type: 'web_search_result',
+            url: 'https://www.ebay.co.uk/sch/audio-sold',
+            title: 'Sold audio listings',
+            encrypted_content: 'x',
+            page_age: null,
+          },
+        ],
+      },
+    },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } },
+    ...answer.split(' ').map((w, i) => ({
+      type: 'content_block_delta',
+      index: 2,
+      delta: { type: 'text_delta', text: (i ? ' ' : '') + w },
+    })),
+    { type: 'content_block_stop', index: 2 },
+    {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 9 },
+    },
+    { type: 'message_stop' },
+  ];
+  return events.map((e) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+}
+
 /** Fake DeepSeek: answers based on what the prompt asks for. */
 async function mockDeepSeek(page: Page) {
+  // Web search goes through DeepSeek's Anthropic-compatible endpoint.
+  await page.route('https://api.deepseek.com/anthropic/v1/messages', async (route: Route) => {
+    await new Promise((r) => setTimeout(r, 700)); // long enough to see the typing indicator
+    return route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+      body: searchStream('Top categories for you: **audio** (live).'),
+    });
+  });
   await page.route('https://api.deepseek.com/chat/completions', async (route: Route) => {
     const body = route.request().postDataJSON() as { messages: { content: string }[]; stream?: boolean };
     const prompt = body.messages.map((m) => m.content).join('\n');
@@ -97,8 +163,37 @@ test('AI writes a listing and the assistant streams replies', async ({ page }) =
   await expect(page.getByLabel('Description')).toHaveValue(/Mount: Canon EF/);
 
   await page.goto('/#/assistant');
-  await page.getByPlaceholder('Message the assistant…').fill('What should I source?');
+  await page.getByPlaceholder(/Message the assistant/).fill('What should I source?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+  // While waiting, three animated dots show instead of a static "…".
+  const dots = page.getByRole('status', { name: /Thinking/ });
+  await expect(dots).toBeVisible();
+  await expect(dots.locator('.typing-dot').first()).toHaveCSS('animation-name', 'typing-bounce');
+
   await expect(page.getByText('Top categories for you:')).toBeVisible();
   await expect(page.locator('strong', { hasText: 'audio' })).toBeVisible();
+  // Web-backed answers say so and link their sources.
+  await expect(page.getByText('Live web data · 1 source')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sold audio listings' })).toHaveAttribute(
+    'href',
+    'https://www.ebay.co.uk/sch/audio-sold',
+  );
+
+  // With web search off, the same question is answered from the model's knowledge and labelled.
+  await page.getByRole('button', { name: 'Web' }).click();
+  await page.getByPlaceholder(/Message the assistant/).fill('And now?');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('No web access — prices are estimates')).toBeVisible();
+});
+
+test('switching AI provider keeps each key', async ({ page }) => {
+  await setup(page);
+  const provider = page.getByLabel('Provider', { exact: true });
+  await provider.selectOption('anthropic');
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-opus-5');
+  await expect(page.getByLabel('API key')).toHaveValue('');
+  await provider.selectOption('deepseek');
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('deepseek-flash');
+  await expect(page.getByLabel('API key')).toHaveValue('sk-test');
 });
